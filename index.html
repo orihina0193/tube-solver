@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>試験管パズルソルバー</title>
+<style>
+:root{--bg:#10161f;--card:#1a2330;--line:#2c3a4d;--fg:#e8eef6;--sub:#8fa1b8;--acc:#f0a030;--ok:#3ec97a;--ng:#ef5b5b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:-apple-system,"Hiragino Sans",sans-serif;font-size:15px;line-height:1.4;padding:8px 10px 16px}
+h1{font-size:15px;margin:2px 0 6px;color:var(--sub)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:8px 10px;margin-bottom:8px}
+.card h2{font-size:14px;margin:0 0 8px;color:var(--sub)}
+button,.btn{background:var(--acc);color:#201400;border:0;border-radius:8px;padding:10px 14px;font-size:15px;font-weight:700;cursor:pointer}
+button.sub,.btn.sub{background:#2c3a4d;color:var(--fg)}
+button:disabled{opacity:.4}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+label.f{display:flex;align-items:center;gap:6px;color:var(--sub);font-size:13px}
+input[type=number]{width:64px;padding:6px;border-radius:6px;border:1px solid var(--line);background:#0e141c;color:var(--fg);font-size:15px}
+#cv{width:100%;border-radius:8px;display:none;margin-top:10px}
+.trow{display:flex;justify-content:center;gap:6px;margin:4px 0 8px}
+.tube{display:flex;flex-direction:column;align-items:stretch;gap:2px;padding:2px 2px 4px;border:2px solid transparent;border-radius:12px;flex:0 0 calc((100% - 30px)/6);min-width:0}
+.tube .no{font-size:11px;color:var(--sub);text-align:center}
+.tube.from{border-color:var(--ng);background:rgba(239,91,91,.12)}
+.tube.to{border-color:var(--ok);background:rgba(62,201,122,.12)}
+.tube.next{border-style:dashed}
+.tube .no.fromlb{color:var(--ng);font-weight:700}
+.tube .no.tolb{color:var(--ok);font-weight:700}
+#steps .cur{background:rgba(240,160,48,.15);border-radius:6px;padding:6px 8px}
+#steps .done{opacity:.45;text-decoration:line-through}
+.cell{width:100%;height:23px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;border:1px solid rgba(255,255,255,.12);cursor:pointer}
+.cell.empty{background:transparent;border:1px dashed #3a4a60}
+.cell.hid{background:#27323f;color:#fff;font-size:16px}
+.tube .cells{border:2px solid #5d6f86;border-top:none;border-radius:0 0 18px 18px;padding:2px;display:flex;flex-direction:column;gap:1px;background:rgba(255,255,255,.03)}
+#sheet{position:fixed;left:0;right:0;bottom:0;background:#1d2837;border-top:1px solid var(--line);padding:14px;display:none;z-index:9;border-radius:16px 16px 0 0;max-height:60vh;overflow:auto}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{width:46px;height:40px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;border:2px solid rgba(255,255,255,.2);cursor:pointer}
+.small{font-size:12px;color:var(--sub)}
+#steps .step{padding:6px 0;border-bottom:1px solid var(--line)}
+#steps .step b{color:var(--acc)}
+details.card summary{cursor:pointer;color:var(--sub);font-size:14px;padding:4px 0}
+details.card[open] summary{margin-bottom:8px}
+#pNext{flex:1;padding:12px 14px}
+.big{font-size:15px;font-weight:700;margin-bottom:6px}
+.note{color:var(--acc);font-size:13px}
+</style>
+</head>
+<body>
+<h1>試験管パズルソルバー</h1>
+
+<div class="card" id="topbar">
+  <div class="row">
+    <label class="btn">📷 スクショを選ぶ<input id="file" type="file" accept="image/*" hidden></label>
+    <button id="solve">解く</button>
+  </div>
+  <div id="detNote" class="note" style="font-size:12px;margin-top:4px"></div>
+</div>
+
+<div class="card" id="boardCard" style="display:none">
+  <div id="board"></div>
+</div>
+
+<div class="card" id="solveCard" style="display:none">
+  <div id="res"></div>
+</div>
+
+<details class="card" id="detail">
+  <summary>⚙ 詳細・オプション</summary>
+  <div class="row">
+    <label class="f">1本の容量<input id="cap" type="number" min="2" max="12" placeholder="自動"></label>
+    <label class="f">空き管の数<input id="empties" type="number" min="0" max="6" value="2"></label>
+  </div>
+  <div class="small" style="margin:6px 0 10px">容量は空欄なら自動です。空き管は画面に映っていても色がないので、読み取り前に本数をここへ入れてください。</div>
+  <div class="row" style="margin-bottom:10px">
+    <button class="sub" id="manual">手入力で始める</button>
+    <button class="sub" id="addTube">＋管</button>
+    <button class="sub" id="delTube">－管</button>
+    <button class="sub" id="undo">1つ戻す</button>
+  </div>
+  <div id="cand" class="small"></div>
+  <div class="small" style="margin-top:10px">手順一覧</div>
+  <div id="steps"></div>
+  <canvas id="cv"></canvas>
+</details>
+
+<div id="sheet"></div>
+
+<script>
+/*CORE_START*/
+function rgb2lab(r,g,b){
+  const f=v=>{v/=255;return v>0.04045?Math.pow((v+0.055)/1.055,2.4):v/12.92};
+  r=f(r);g=f(g);b=f(b);
+  let x=(r*0.4124+g*0.3576+b*0.1805)/0.95047,y=(r*0.2126+g*0.7152+b*0.0722),z=(r*0.0193+g*0.1192+b*0.9505)/1.08883;
+  const h=t=>t>0.008856?Math.cbrt(t):7.787*t+16/116;
+  x=h(x);y=h(y);z=h(z);
+  return [116*y-16,500*(x-y),200*(y-z)];
+}
+function dE(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])}
+
+/* 画像から試験管を検出する。img = {width,height,data(RGBA)} */
+function detectBoard(img,opt){
+  opt=opt||{};
+  const W=img.width,H=img.height,d=img.data,sc=W/540;
+  const mask=new Uint8Array(W*H);
+  for(let i=0;i<W*H;i++){
+    const r=d[i*4],g=d[i*4+1],b=d[i*4+2];
+    const mx=Math.max(r,g,b),mn=Math.min(r,g,b);
+    const v=mx/255,s=mx?(mx-mn)/mx:0;
+    if(v>=0.30&&s>=0.22)mask[i]=1;
+  }
+  // 連結成分
+  const lab=new Int32Array(W*H);
+  const comps=[];
+  const stack=new Int32Array(W*H);
+  let id=0;
+  for(let p=0;p<W*H;p++){
+    if(!mask[p]||lab[p])continue;
+    id++;let sp=0;stack[sp++]=p;lab[p]=id;
+    let x0=W,x1=0,y0=H,y1=0,area=0;
+    while(sp){
+      const q=stack[--sp];const x=q%W,y=(q/W)|0;area++;
+      if(x<x0)x0=x;if(x>x1)x1=x;if(y<y0)y0=y;if(y>y1)y1=y;
+      if(x>0&&mask[q-1]&&!lab[q-1]){lab[q-1]=id;stack[sp++]=q-1}
+      if(x<W-1&&mask[q+1]&&!lab[q+1]){lab[q+1]=id;stack[sp++]=q+1}
+      if(y>0&&mask[q-W]&&!lab[q-W]){lab[q-W]=id;stack[sp++]=q-W}
+      if(y<H-1&&mask[q+W]&&!lab[q+W]){lab[q+W]=id;stack[sp++]=q+W}
+    }
+    comps.push({x0,x1,y0,y1,area});
+  }
+  const tubes=comps.filter(c=>{
+    const w=c.x1-c.x0+1,h=c.y1-c.y0+1;
+    return w>=0.06*W&&w<=0.16*W&&h>=0.7*w&&h<=5*w&&c.area/(w*h)>0.6;
+  });
+  if(!tubes.length)return {tubes:[],palette:[],cap:0,segH:0,boxes:[]};
+  // 色の帯：隣の行との急な色変化を境目にする（グラデーションは無視）
+  for(const t of tubes){
+    const cx=Math.round(t.x0+0.55*(t.x1-t.x0));
+    const w=t.x1-t.x0+1;
+    const rows=[];
+    for(let y=t.y0;y<=t.y1;y++){
+      let r=0,g=0,b=0;
+      for(let dx=-2;dx<=2;dx++){const i=(y*W+cx+dx)*4;r+=d[i];g+=d[i+1];b+=d[i+2]}
+      r/=5;g/=5;b/=5;rows.push({rgb:[r,g,b],lab:rgb2lab(r,g,b)});
+    }
+    const starts=[0];
+    for(let i=1;i<rows.length;i++)if(dE(rows[i].lab,rows[i-1].lab)>12)starts.push(i);
+    let runs=starts.map((s0,k)=>({s:s0,e:(k+1<starts.length?starts[k+1]:rows.length)}));
+    // 短すぎる帯（境目のにじみ）は前の帯に吸収
+    const keep=[];
+    for(const r of runs){
+      if(r.e-r.s<0.5*w){ if(keep.length)keep[keep.length-1].e=r.e; /* 先頭の細い帯は捨てる */ }
+      else keep.push({s:r.s,e:r.e});
+    }
+    t.bands=keep.map(r=>{
+      const a=r.s+Math.floor((r.e-r.s)*0.2),z=r.e-Math.floor((r.e-r.s)*0.2);
+      let R=0,G=0,B=0,n=0;
+      for(let i=a;i<Math.max(z,a+1);i++){R+=rows[i].rgb[0];G+=rows[i].rgb[1];B+=rows[i].rgb[2];n++}
+      return {y0:t.y0+r.s,h:r.e-r.s,n,sum:[R,G,B],rgb:[R/n,G/n,B/n]};
+    });
+    // 隣り合って同じ色に見える帯は結合
+    const mg=[];
+    for(const b of t.bands){
+      const l=rgb2lab(b.rgb[0],b.rgb[1],b.rgb[2]);
+      const last=mg[mg.length-1];
+      if(last&&dE(last.lab,l)<10){last.h+=b.h}else mg.push({y0:b.y0,h:b.h,n:b.n,sum:b.sum,rgb:b.rgb,lab:l});
+    }
+    // 管の縁やの？部分の暗い帯は無視
+    const dull=b=>{const mx=Math.max(...b.rgb),mn=Math.min(...b.rgb);const v=mx/255,sa=mx?(mx-mn)/mx:0;return v<0.28||(sa<0.4&&v<0.5)};
+    while(mg.length&&dull(mg[0]))mg.shift();
+    while(mg.length&&dull(mg[mg.length-1]))mg.pop();
+    if(mg.length){const L=mg[mg.length-1];t.y0=mg[0].y0;t.y1=L.y0+L.h-1}
+    t.bands=mg;t.cx=cx;t.w=w;
+  }
+  // 1段の高さ
+  let minH=1e9,wsum=0;
+  for(const t of tubes){wsum+=t.w;for(const b of t.bands)if(b.h<minH)minH=b.h}
+  const wavg=wsum/tubes.length;
+  const segH=(minH>=0.7*wavg&&minH<=1.3*wavg)?minH:wavg;
+  // パレット
+  const palette=[];
+  const colorOf=(rgb,l)=>{
+    for(let i=0;i<palette.length;i++)if(dE(palette[i].lab,l)<12)return i;
+    palette.push({rgb:rgb.map(Math.round),lab:l});return palette.length-1;
+  };
+  for(const t of tubes){
+    t.segs=[];
+    for(const b of t.bands){
+      const n=Math.max(1,Math.round(b.h/segH));
+      const rgb=b.rgb;const ci=colorOf(rgb,b.lab);
+      for(let k=0;k<n;k++)t.segs.push(ci);
+    }
+  }
+  const cap=opt.cap||Math.max(...tubes.map(t=>t.segs.length));
+  // 容量を指定したときは、はみ出した分（上端のゴミ）を切る
+  if(opt.cap)for(const t of tubes)if(t.segs.length>cap)t.segs=t.segs.slice(t.segs.length-cap);
+  // ？の有無
+  for(const t of tubes){
+    const w=t.x1-t.x0;const xa=Math.round(t.cx-w*0.2),xb=Math.round(t.cx+w*0.2);
+    const ya=t.y1+2,yb=Math.min(H-1,Math.round(t.y1+segH));
+    let white=0,tot=0;
+    for(let y=ya;y<=yb;y++)for(let x=xa;x<=xb;x++){const i=(y*W+x)*4;tot++;if(Math.min(d[i],d[i+1],d[i+2])>190)white++}
+    t.hasHidden=tot>0&&white/tot>0.04&&t.segs.length<cap;
+    t.hidden=t.hasHidden?cap-t.segs.length:0;
+  }
+  // 行にまとめる
+  tubes.sort((a,b)=>(a.y0+a.y1)/2-(b.y0+b.y1)/2);
+  const rows=[];
+  for(const t of tubes){
+    const cy=(t.y0+t.y1)/2;
+    let r=rows.find(r=>Math.abs(r.cy-cy)<segH*2);
+    if(!r){r={cy,list:[]};rows.push(r)}
+    r.list.push(t);
+  }
+  rows.sort((a,b)=>a.cy-b.cy);
+  const out=[];
+  rows.forEach((r,ri)=>{r.list.sort((a,b)=>a.x0-b.x0);r.list.forEach(t=>out.push({segs:t.segs,hidden:t.hidden,row:ri,box:[t.x0,t.y0,t.x1,t.y1]}))});
+  return {tubes:out,palette:palette.map(p=>({rgb:p.rgb})),cap,segH};
+}
+
+/* ---- ソルバー ---- */
+// 管は 下→上 の配列。-1 は隠れ色(？)
+function topRun(t){
+  const n=t.length;if(!n)return null;const c=t[n-1];if(c<0)return null;
+  let k=1;while(n-1-k>=0&&t[n-1-k]===c)k++;
+  return {c,k};
+}
+function genMoves(st,cap){
+  const mv=[];
+  for(let a=0;a<st.length;a++){
+    const run=topRun(st[a]);if(!run)continue;
+    const mono=st[a].every(x=>x===run.c);
+    for(let b=0;b<st.length;b++){
+      if(a===b)continue;const B=st[b];if(B.length>=cap)continue;
+      if(B.length===0){if(mono)continue}
+      else if(B[B.length-1]!==run.c)continue;
+      else if(mono&&B.every(x=>x===run.c)&&B.length<st[a].length)continue;
+      mv.push([a,b,Math.min(run.k,cap-B.length)]);
+    }
+  }
+  return mv;
+}
+function applyMove(st,m){
+  const ns=st.slice();const A=ns[m[0]].slice(),B=ns[m[1]].slice();
+  const c=A[A.length-1];
+  for(let i=0;i<m[2];i++){A.pop();B.push(c)}
+  ns[m[0]]=A;ns[m[1]]=B;return ns;
+}
+const keyOf=st=>st.map(t=>t.join(',')).sort().join('|');
+function isSolved(st,cap){
+  return st.every(t=>t.length===0||(t.length===cap&&t.every(x=>x===t[0]&&x>=0)));
+}
+function hasHidden(st){return st.some(t=>t.includes(-1))}
+function hOf(st){
+  let runs=0;const cs=new Set();
+  for(const t of st){let prev=null;for(const x of t){if(x!==prev)runs++;prev=x;cs.add(x)}}
+  return runs-cs.size;
+}
+function scoreState(st,cap){
+  let s=0;
+  for(const t of st){
+    if(t.length===0)s+=4;
+    else if(t.length===cap&&t.every(x=>x===t[0]&&x>=0))s+=3;
+    else if(t.every(x=>x===t[0]))s+=1;
+  }
+  return s;
+}
+// 隠れ色がある場合：次に1つ隠れ色が見えるまでの最短手順
+function planReveal(st,cap,maxNodes){
+  maxNodes=maxNodes||200000;
+  let level=[{st,path:[]}];const seen=new Set([keyOf(st)]);let nodes=0;
+  for(let depth=0;depth<14;depth++){
+    const next=[];const goals=[];
+    for(const nd of level){
+      for(const m of genMoves(nd.st,cap)){
+        const ns=applyMove(nd.st,m);
+        const A=ns[m[0]];
+        const rev=A.length>0&&A[A.length-1]===-1;
+        if(rev){goals.push({st:ns,path:nd.path.concat([m])});continue}
+        const k=keyOf(ns);if(seen.has(k))continue;seen.add(k);
+        if(++nodes>maxNodes)return goals.length?pick(goals,cap):null;
+        next.push({st:ns,path:nd.path.concat([m])});
+      }
+    }
+    if(goals.length)return pick(goals,cap);
+    if(!next.length)return null;
+    level=next;
+  }
+  return null;
+}
+function pick(goals,cap){
+  let best=goals[0],bs=-1e9;
+  for(const g of goals){const s=scoreState(g.st,cap);if(s>bs){bs=s;best=g}}
+  return best;
+}
+class Heap{
+  constructor(){this.a=[]}
+  push(x){const a=this.a;a.push(x);let i=a.length-1;while(i>0){const p=(i-1)>>1;if(a[p].f<=a[i].f)break;[a[p],a[i]]=[a[i],a[p]];i=p}}
+  pop(){const a=this.a;const t=a[0];const l=a.pop();if(a.length){a[0]=l;let i=0;for(;;){let m=i;const L=2*i+1,R=L+1;if(L<a.length&&a[L].f<a[m].f)m=L;if(R<a.length&&a[R].f<a[m].f)m=R;if(m===i)break;[a[m],a[i]]=[a[i],a[m]];i=m}}return t}
+  get size(){return this.a.length}
+}
+// 隠れ色なし：最後まで解く
+function solveFull(st,cap,maxNodes){
+  maxNodes=maxNodes||300000;
+  const heap=new Heap();const seen=new Map();
+  heap.push({st,path:[],f:hOf(st)*3});seen.set(keyOf(st),0);let nodes=0;
+  while(heap.size){
+    const nd=heap.pop();
+    if(isSolved(nd.st,cap))return nd.path;
+    for(const m of genMoves(nd.st,cap)){
+      const ns=applyMove(nd.st,m);const k=keyOf(ns);const g=nd.path.length+1;
+      if(seen.has(k)&&seen.get(k)<=g)continue;seen.set(k,g);
+      if(++nodes>maxNodes)return null;
+      heap.push({st:ns,path:nd.path.concat([m]),f:g+3*hOf(ns)});
+    }
+  }
+  return null;
+}
+/*CORE_END*/
+
+/* ---- UI ---- */
+const S={cap:4,palette:[],tubes:[],rows:[],hist:[],hl:null,plan:null};
+const $=id=>document.getElementById(id);
+const EMPTY=-2,HID=-1;
+
+function clearPlan(){S.plan=null;S.hl=null;['res','steps'].forEach(id=>{const r=document.getElementById(id);if(r)r.innerHTML=''})}
+function snap(){S.hist.push(JSON.stringify({tubes:S.tubes,palette:S.palette,rows:S.rows,cap:S.cap}));if(S.hist.length>60)S.hist.shift()}
+function restore(){
+  const j=S.hist.pop();if(!j)return;const o=JSON.parse(j);
+  S.tubes=o.tubes;S.palette=o.palette;S.rows=o.rows;S.cap=o.cap;clearPlan();render();
+}
+function lum(rgb){return (0.299*rgb[0]+0.587*rgb[1]+0.114*rgb[2])/255}
+function colorStyle(c){const p=S.palette[c];if(!p)return '';return `background:rgb(${p.rgb});color:${lum(p.rgb)>0.55?'#111':'#fff'}`}
+
+function render(){
+  $('boardCard').style.display='block';$('solveCard').style.display='block';
+  if(!S.plan&&!$('res').innerHTML)$('res').innerHTML='<div class="small">上の「解く」を押すと、次の手を出します</div>';
+  let h='';
+  for(let st=0;st<S.tubes.length;st+=6){
+    h+='<div class="trow">';
+    for(let i=st;i<Math.min(st+6,S.tubes.length);i++){
+      const t=S.tubes[i];
+      let cls='',lab=String(i+1),lc='';
+      if(S.hl&&S.hl.f===i){cls=' from'+(S.hl.done?'':' next');lab=`${i+1} →${S.hl.t+1}`;lc=' fromlb'}
+      else if(S.hl&&S.hl.t===i){cls=' to'+(S.hl.done?'':' next');lab=`${i+1} ←${S.hl.f+1}`;lc=' tolb'}
+      h+=`<div class="tube${cls}"><div class="no${lc}">${lab}</div><div class="cells">`;
+      for(let p=S.cap-1;p>=0;p--){
+        const v=t[p];
+        if(v===EMPTY)h+=`<div class="cell empty" data-t="${i}" data-p="${p}"></div>`;
+        else if(v===HID)h+=`<div class="cell hid" data-t="${i}" data-p="${p}">?</div>`;
+        else h+=`<div class="cell" style="${colorStyle(v)}" data-t="${i}" data-p="${p}">${v+1}</div>`;
+      }
+      h+='</div></div>';
+    }
+    h+='</div>';
+  }
+  $('board').innerHTML=h;
+  $('board').querySelectorAll('.cell').forEach(el=>el.onclick=()=>openSheet(+el.dataset.t,+el.dataset.p));
+  renderCand();
+}
+function renderCand(){
+  const filled=S.tubes.filter(t=>t.some(x=>x!==EMPTY)).length;
+  const nc=S.palette.length;if(!nc){$('cand').textContent='';return}
+  const total=filled*S.cap/nc;
+  const cnt=Array(nc).fill(0);let hid=0;
+  S.tubes.forEach(t=>t.forEach(x=>{if(x>=0)cnt[x]++;else if(x===HID)hid++}));
+  let msg=`色数 ${nc} / 中身のある管 ${filled}本`;
+  if(Number.isInteger(total)){
+    const rest=cnt.map((c,i)=>[i,total-c]).filter(x=>x[1]>0);
+    const sum=rest.reduce((a,b)=>a+b[1],0);
+    if(hid>0){
+      msg+=` ／ 各色${total}段として、？に入る残り：`+rest.map(x=>`${x[0]+1}番×${x[1]}`).join('、');
+      if(sum!==hid)msg+=`（？は${hid}個で合わず。色の取り違えがあるかも）`;
+    }
+  }else msg+=' ／ 色数と管数が割り切れません。似た色の統合や分裂を確認してください。';
+  $('cand').textContent=msg;
+}
+
+function openSheet(t,p){
+  const sh=$('sheet');
+  let h=`<div class="small" style="margin-bottom:8px">管${t+1}の段を変更</div><div class="chips">`;
+  S.palette.forEach((c,i)=>{h+=`<div class="chip" style="${colorStyle(i)}" data-v="${i}">${i+1}</div>`});
+  h+=`<div class="chip" style="background:#27323f;color:#fff" data-v="${HID}">？</div>`;
+  h+=`<div class="chip" style="background:transparent;border-style:dashed;color:#8fa1b8" data-v="${EMPTY}">空</div>`;
+  h+=`</div><div class="row" style="margin-top:12px"><label class="f">新しい色<input id="newc" type="color" value="#ff8800"></label><button class="sub" id="addc">追加</button><button class="sub" id="closeSheet">閉じる</button></div>`;
+  sh.innerHTML=h;sh.style.display='block';
+  sh.querySelectorAll('.chip').forEach(el=>el.onclick=()=>{
+    snap();S.tubes[t][p]=+el.dataset.v;clearPlan();sh.style.display='none';render();
+  });
+  $('addc').onclick=()=>{
+    const v=$('newc').value;const rgb=[1,3,5].map(i=>parseInt(v.substr(i,2),16));
+    snap();S.palette.push({rgb});S.tubes[t][p]=S.palette.length-1;clearPlan();sh.style.display='none';render();
+  };
+  $('closeSheet').onclick=()=>sh.style.display='none';
+}
+
+function fromDetection(res,empties){
+  S.cap=res.cap;S.palette=res.palette;S.tubes=[];S.rows=[];S.hist=[];S.plan=null;S.hl=null;
+  res.tubes.forEach(t=>{
+    const cells=[];
+    for(let i=0;i<t.hidden;i++)cells.push(HID);
+    for(let i=t.segs.length-1;i>=0;i--)cells.push(t.segs[i]);
+    while(cells.length<S.cap)cells.push(EMPTY);
+    S.tubes.push(cells);S.rows.push(t.row);
+  });
+  const lastRow=S.rows.length?Math.max(...S.rows)+1:0;
+  for(let i=0;i<empties;i++){S.tubes.push(Array(S.cap).fill(EMPTY));S.rows.push(lastRow)}
+  render();
+}
+
+function handleImage(im){
+  try{
+    const w=Math.min(540,im.width),h=Math.round(im.height*w/im.width);
+    const cv=$('cv');cv.width=w;cv.height=h;cv.style.display='block';
+    const ctx=cv.getContext('2d',{willReadFrequently:true});ctx.drawImage(im,0,0,w,h);
+    const img=ctx.getImageData(0,0,w,h);
+    const capIn=parseInt($('cap').value)||0;
+    const res=detectBoard(img,{cap:capIn});
+    if(!res.tubes.length){$('detNote').textContent='試験管が見つかりませんでした。「手入力で始める」を使うか、画面全体のスクショで試してください。';return}
+    ctx.lineWidth=2;ctx.font='bold 14px sans-serif';
+    res.tubes.forEach((t,i)=>{ctx.strokeStyle='#3ec97a';ctx.strokeRect(t.box[0],t.box[1],t.box[2]-t.box[0],t.box[3]-t.box[1]);ctx.fillStyle='#fff';ctx.fillText(i+1,t.box[0]+2,t.box[1]-3)});
+    $('detNote').textContent=`${res.tubes.length}本を検出（色${res.palette.length}・容量${res.cap}）。違う段はタップで修正できます。`;
+    fromDetection(res,Math.max(0,parseInt($('empties').value)||0));
+  }catch(err){
+    $('detNote').textContent='読み取り中にエラー：'+(err&&err.message?err.message:err)+'（ブラウザ側の制限かもしれません。通常のブラウザで開いてみてください）';
+  }
+}
+$('file').onchange=e=>{
+  const f=e.target.files&&e.target.files[0];
+  if(!f){$('detNote').textContent='ファイルが選ばれていません。';return}
+  $('detNote').textContent='読み込み中…（'+f.name+'）';
+  const fr=new FileReader();
+  fr.onerror=()=>{$('detNote').textContent='ファイルを読み込めませんでした。';};
+  fr.onload=()=>{
+    const im=new Image();
+    im.onload=()=>handleImage(im);
+    im.onerror=()=>{$('detNote').textContent='画像として開けませんでした。PNG/JPEGのスクショを選んでください。';};
+    im.src=fr.result;
+  };
+  fr.readAsDataURL(f);
+};
+$('manual').onclick=()=>{
+  const cap=parseInt($('cap').value)||4;S.cap=cap;S.palette=[];S.tubes=[];S.rows=[];S.hist=[];
+  for(let i=0;i<6;i++){S.tubes.push(Array(cap).fill(EMPTY));S.rows.push(0)}
+  render();
+};
+$('addTube').onclick=()=>{snap();S.tubes.push(Array(S.cap).fill(EMPTY));S.rows.push(S.rows.length?Math.max(...S.rows):0);render()};
+$('delTube').onclick=()=>{if(S.tubes.length>1){snap();S.tubes.pop();S.rows.pop();render()}};
+$('undo').onclick=restore;
+
+function moveText(m){return `管${m[0]+1} → 管${m[1]+1}（${m[2]}段）`}
+function boardState(){return S.tubes.map(t=>t.filter(x=>x!==EMPTY))}
+function doMove(m){
+  const A=S.tubes[m[0]].filter(x=>x!==EMPTY),B=S.tubes[m[1]].filter(x=>x!==EMPTY);
+  const c=A[A.length-1];
+  for(let i=0;i<m[2];i++){A.pop();B.push(c)}
+  const pad=arr=>{while(arr.length<S.cap)arr.push(EMPTY);return arr};
+  S.tubes[m[0]]=pad(A);S.tubes[m[1]]=pad(B);
+}
+function showPlan(){
+  const P=S.plan;if(!P)return;
+  const n=P.moves.length,i=P.i;
+  // ハイライト：実行済みなら直前に動かした手、まだなら最初の手を点線で予告
+  if(i>0&&P.last)S.hl={f:P.last[0],t:P.last[1],done:true};
+  else if(n)S.hl={f:P.moves[0][0],t:P.moves[0][1],done:false};
+  let h='';
+  if(i>0&&P.last)h+=`<div class="small" style="margin-bottom:4px">いま動かした：${moveText(P.last)}（<span style="color:var(--ng)">赤＝元</span>／<span style="color:var(--ok)">緑＝先</span>）</div>`;
+  if(i<n)h+=`<div class="big">${i===0?'最初の手':'次の手'}：${moveText(P.moves[i])} <span class="small">（${i}/${n}）</span></div>`;
+  else{
+    h+=`<div class="big">${P.mode==='full'?'完成です 🎉':'ここまで進めました'} <span class="small">（${i}/${n}）</span></div>`;
+    if(P.mode==='reveal')h+='<div class="small" style="margin-bottom:6px">ゲームで「？」の色が見えたら、そのマスをタップして色を入れ、もう一度「解く」を押してください。</div>';
+  }
+  h+='<div class="row" style="flex-wrap:nowrap">';
+  h+=`<button class="sub" id="pBack" ${i===0?'disabled':''}>◀ 戻す</button>`;
+  h+=`<button id="pNext" ${i>=n?'disabled':''}>▶ 次の手を実行</button>`;
+  h+='</div>';
+  $('res').innerHTML=h;
+  let lst=`<div class="small" style="margin-bottom:4px">${P.mode==='reveal'?'この手順で隠れ色が見えます':'最後まで解けます'}</div>`;
+  const from=Math.max(0,i-1),to=Math.min(n,from+12);
+  for(let k=from;k<to;k++){
+    lst+=`<div class="step ${k===i?'cur':(k<i?'done':'')}"><b>${k+1}.</b> ${moveText(P.moves[k])}</div>`;
+  }
+  if(to<n)lst+=`<div class="small">…ほか${n-to}手</div>`;
+  $('steps').innerHTML=lst;
+  $('pNext').onclick=()=>{
+    if(P.i>=n)return;
+    P.snaps.push(JSON.stringify(S.tubes));
+    const m=P.moves[P.i];doMove(m);P.last=m;P.i++;
+    showPlan();
+  };
+  $('pBack').onclick=()=>{
+    if(P.i<=0)return;
+    S.tubes=JSON.parse(P.snaps.pop());P.i--;
+    P.last=P.i>0?P.moves[P.i-1]:null;
+    if(P.i===0)S.hl=null;
+    showPlan();
+  };
+  render();
+}
+$('solve').onclick=()=>{
+  if(!S.tubes.length){$('detNote').textContent='先にスクショを選んでください。';return}
+  const st=boardState();const res=$('res');
+  const cap=S.cap;
+  S.hl=null;
+  if(st.some(t=>t.length>cap)){res.innerHTML='<div class="note">容量より多い管があります。</div>';render();return}
+  if(isSolved(st,cap)){res.innerHTML='<b>完成しています 🎉</b>';render();return}
+  res.innerHTML='計算中…';
+  setTimeout(()=>{
+    let moves=null,mode='';
+    if(hasHidden(st)){
+      const r=planReveal(st,cap);
+      if(r){moves=r.path;mode='reveal'}
+    }else{
+      moves=solveFull(st,cap);mode='full';
+    }
+    if(!moves||!moves.length){
+      res.innerHTML='<div class="note">見えている範囲で進められる手が見つかりませんでした。「1つ戻す」で盤面を戻すか、ゲームの「追加」管を使う手もあります。</div>';S.hl=null;render();return;
+    }
+    S.plan={moves,mode,i:0,snaps:[],last:null};
+    showPlan();
+  },30);
+};
+</script>
+</body>
+</html>
