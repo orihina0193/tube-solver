@@ -95,18 +95,63 @@ function rgb2lab(r,g,b){
   x=h(x);y=h(y);z=h(z);
   return [116*y-16,500*(x-y),200*(y-z)];
 }
+/* 画像を幅tw（以下）に、面積平均で縮小する。ブラウザの縮小方法の違いに左右されないようにする */
+function boxDownscale(src,tw){
+  if(src.width<=tw)return src;
+  const sc=src.width/tw,th=Math.max(1,Math.round(src.height/sc));
+  const out=new Uint8ClampedArray(tw*th*4),sd=src.data,W=src.width;
+  for(let y=0;y<th;y++){
+    const ya=Math.floor(y*sc),yb=Math.max(ya+1,Math.min(src.height,Math.floor((y+1)*sc)));
+    for(let x=0;x<tw;x++){
+      const xa=Math.floor(x*sc),xb=Math.max(xa+1,Math.min(W,Math.floor((x+1)*sc)));
+      let r=0,g=0,b=0,n=0;
+      for(let yy=ya;yy<yb;yy++){let i=(yy*W+xa)*4;for(let xx=xa;xx<xb;xx++,i+=4){r+=sd[i];g+=sd[i+1];b+=sd[i+2];n++}}
+      const o=(y*tw+x)*4;out[o]=r/n;out[o+1]=g/n;out[o+2]=b/n;out[o+3]=255;
+    }
+  }
+  return {width:tw,height:th,data:out};
+}
 function dE(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])}
 
 /* 画像から試験管を検出する。img = {width,height,data(RGBA)} */
 function detectBoard(img,opt){
   opt=opt||{};
   const W=img.width,H=img.height,d=img.data,sc=W/540;
-  const mask=new Uint8Array(W*H);
+  const raw=new Uint8Array(W*H);
   for(let i=0;i<W*H;i++){
     const r=d[i*4],g=d[i*4+1],b=d[i*4+2];
     const mx=Math.max(r,g,b),mn=Math.min(r,g,b);
     const v=mx/255,s=mx?(mx-mn)/mx:0;
-    if(v>=0.30&&s>=0.22)mask[i]=1;
+    // 暗い青（背景の光や「？」マスの暗い地）は液体ではない
+    const dimBlue=v<0.45&&b>=r&&b>=g*0.9;
+    if(v>=0.30&&s>=0.22&&!dimBlue)raw[i]=1;
+  }
+  // 横に細い線（ガラスの縁）を消す：左右R画素まで続けて色付きの画素だけ残す
+  const R=Math.max(2,Math.round(3*sc));
+  const er=new Uint8Array(W*H);
+  for(let y=0;y<H;y++){
+    let run=0;
+    for(let x=0;x<W;x++){
+      if(raw[y*W+x])run++;else run=0;
+      if(run>=2*R+1)er[y*W+x-R]=1;
+    }
+  }
+  // 縦に細い隙間（段の境目の線）を埋める
+  const K=Math.max(2,Math.round(3*sc));
+  const dil=new Uint8Array(W*H);
+  for(let x=0;x<W;x++){
+    let last=-1e9;
+    for(let y=0;y<H;y++){if(er[y*W+x])last=y;if(y-last<=K)dil[y*W+x]=1}
+    last=1e9;
+    for(let y=H-1;y>=0;y--){if(er[y*W+x])last=y;if(last-y<=K)dil[y*W+x]=1}
+  }
+  const mask=new Uint8Array(W*H);
+  for(let x=0;x<W;x++){
+    let run=0;
+    for(let y=0;y<H;y++){
+      if(dil[y*W+x])run++;else run=0;
+      if(run>=2*K+1)mask[(y-K)*W+x]=1;
+    }
   }
   // 連結成分
   const lab=new Int32Array(W*H);
@@ -125,7 +170,7 @@ function detectBoard(img,opt){
       if(y>0&&mask[q-W]&&!lab[q-W]){lab[q-W]=id;stack[sp++]=q-W}
       if(y<H-1&&mask[q+W]&&!lab[q+W]){lab[q+W]=id;stack[sp++]=q+W}
     }
-    comps.push({x0,x1,y0,y1,area});
+    comps.push({x0:x0-R,x1:x1+R,y0,y1,area});
   }
   const tubes=comps.filter(c=>{
     const w=c.x1-c.x0+1,h=c.y1-c.y0+1;
@@ -202,6 +247,19 @@ function detectBoard(img,opt){
     t.hasHidden=tot>0&&white/tot>0.04&&t.segs.length<cap;
     t.hidden=t.hasHidden?cap-t.segs.length:0;
   }
+  // 色数のつじつま合わせ：液体の総量は 色数 × 容量 のはず。多いときは、いちばん近い2色を同じ色とみなす
+  let total=0;for(const t of tubes)total+=t.segs.length+t.hidden;
+  const want=Math.round(total/cap);
+  while(palette.length>want&&palette.length>1){
+    let bi=-1,bj=-1,bd=1e9;
+    for(let i=0;i<palette.length;i++)for(let j=i+1;j<palette.length;j++){
+      const dd=dE(palette[i].lab,palette[j].lab);if(dd<bd){bd=dd;bi=i;bj=j}
+    }
+    if(bd>30)break;
+    for(const t of tubes)t.segs=t.segs.map(c=>c===bj?bi:(c>bj?c-1:c));
+    palette.splice(bj,1);
+  }
+  const warn=(total!==palette.length*cap)?`色の数(${palette.length})×容量(${cap})と段の合計(${total})が合いません。読み取りを確認してください。`:'';
   // 行にまとめる
   tubes.sort((a,b)=>(a.y0+a.y1)/2-(b.y0+b.y1)/2);
   const rows=[];
@@ -214,7 +272,7 @@ function detectBoard(img,opt){
   rows.sort((a,b)=>a.cy-b.cy);
   const out=[];
   rows.forEach((r,ri)=>{r.list.sort((a,b)=>a.x0-b.x0);r.list.forEach(t=>out.push({segs:t.segs,hidden:t.hidden,row:ri,box:[t.x0,t.y0,t.x1,t.y1]}))});
-  return {tubes:out,palette:palette.map(p=>({rgb:p.rgb})),cap,segH};
+  return {tubes:out,palette:palette.map(p=>({rgb:p.rgb})),cap,segH,warn};
 }
 
 /* ---- ソルバー ---- */
@@ -409,16 +467,22 @@ function fromDetection(res,empties){
 
 function handleImage(im){
   try{
-    const w=Math.min(540,im.width),h=Math.round(im.height*w/im.width);
+    // 元画像を原寸で読み、自前の面積平均で幅540に縮小する（ブラウザの縮小方法に左右されない）
+    let sw=im.width,sh=im.height;
+    if(sw>2400){sh=Math.round(sh*2400/sw);sw=2400}
+    const full=document.createElement('canvas');full.width=sw;full.height=sh;
+    const fctx=full.getContext('2d',{willReadFrequently:true});fctx.drawImage(im,0,0,sw,sh);
+    const img=boxDownscale(fctx.getImageData(0,0,sw,sh),540);
+    const w=img.width,h=img.height;
     const cv=$('cv');cv.width=w;cv.height=h;cv.style.display='block';
-    const ctx=cv.getContext('2d',{willReadFrequently:true});ctx.drawImage(im,0,0,w,h);
-    const img=ctx.getImageData(0,0,w,h);
+    const ctx=cv.getContext('2d',{willReadFrequently:true});
+    ctx.putImageData(new ImageData(img.data,w,h),0,0);
     const capIn=parseInt($('cap').value)||0;
     const res=detectBoard(img,{cap:capIn});
     if(!res.tubes.length){$('detNote').textContent='試験管が見つかりませんでした。「手入力で始める」を使うか、画面全体のスクショで試してください。';return}
     ctx.lineWidth=2;ctx.font='bold 14px sans-serif';
     res.tubes.forEach((t,i)=>{ctx.strokeStyle='#3ec97a';ctx.strokeRect(t.box[0],t.box[1],t.box[2]-t.box[0],t.box[3]-t.box[1]);ctx.fillStyle='#fff';ctx.fillText(i+1,t.box[0]+2,t.box[1]-3)});
-    $('detNote').textContent=`${res.tubes.length}本を検出（色${res.palette.length}・容量${res.cap}）。違う段はタップで修正できます。`;
+    $('detNote').textContent=`${res.tubes.length}本を検出（色${res.palette.length}・容量${res.cap}）。違う段はタップで修正できます。`+(res.warn?' ⚠ '+res.warn:'');
     fromDetection(res,Math.max(0,parseInt($('empties').value)||0));
   }catch(err){
     $('detNote').textContent='読み取り中にエラー：'+(err&&err.message?err.message:err)+'（ブラウザ側の制限かもしれません。通常のブラウザで開いてみてください）';
