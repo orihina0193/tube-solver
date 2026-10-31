@@ -187,8 +187,17 @@ function detectBoard(img,opt){
       for(let dx=-2;dx<=2;dx++){const i=(y*W+cx+dx)*4;r+=d[i];g+=d[i+1];b+=d[i+2]}
       r/=5;g/=5;b/=5;rows.push({rgb:[r,g,b],lab:rgb2lab(r,g,b)});
     }
+    // 段の切れ目：その段のこれまでの平均色から大きく外れたら新しい段にする
+    // （縮小のにじみで色の変化が数行に分散しても見逃さない）
     const starts=[0];
-    for(let i=1;i<rows.length;i++)if(dE(rows[i].lab,rows[i-1].lab)>12)starts.push(i);
+    {
+      let sr=0,sg=0,sb=0,cn=0;
+      for(let i=0;i<rows.length;i++){
+        const [r,g,b]=rows[i].rgb;
+        if(cn>0&&dE(rows[i].lab,rgb2lab(sr/cn,sg/cn,sb/cn))>14){starts.push(i);sr=0;sg=0;sb=0;cn=0}
+        sr+=r;sg+=g;sb+=b;cn++;
+      }
+    }
     let runs=starts.map((s0,k)=>({s:s0,e:(k+1<starts.length?starts[k+1]:rows.length)}));
     // 短すぎる帯（境目のにじみ）は前の帯に吸収
     const keep=[];
@@ -569,18 +578,34 @@ $('solve').onclick=()=>{
   if(isSolved(st,cap)){res.innerHTML='<b>完成しています 🎉</b>';render();return}
   res.innerHTML='計算中…';
   setTimeout(()=>{
-    let moves=null,mode='';
-    if(hasHidden(st)){
-      const r=planReveal(st,cap);
-      if(r){moves=r.path;mode='reveal'}
-    }else{
-      moves=solveFull(st,cap);mode='full';
+    // 今の空き管で進められなければ、空き管を1本・2本足したら進められるかも調べる
+    const find=(board)=>{
+      if(hasHidden(board)){const r=planReveal(board,cap);return r?{moves:r.path,mode:'reveal'}:null}
+      const m=solveFull(board,cap);return m?{moves:m,mode:'full'}:null;
+    };
+    let found=find(st),extra=0;
+    while(!found&&extra<2){
+      extra++;
+      found=find(st.concat(Array.from({length:extra},()=>[])));
+      if(found)break;
     }
-    if(!moves||!moves.length){
-      res.innerHTML='<div class="note">見えている範囲で進められる手が見つかりませんでした。「1つ戻す」で盤面を戻すか、ゲームの「追加」管を使う手もあります。</div>';S.hl=null;render();return;
+    if(found&&extra===0&&found.moves.length){
+      S.plan={moves:found.moves,mode:found.mode,i:0,snaps:[],last:null};
+      showPlan();return;
     }
-    S.plan={moves,mode,i:0,snaps:[],last:null};
-    showPlan();
+    S.hl=null;render();
+    if(found&&extra>0){
+      res.innerHTML=`<div class="big">空き管が足りません</div>
+        <div class="small" style="margin-bottom:8px">今の空き管のままだと進められる手がありません。ゲームの「追加」で空き管を${extra}本足すと進められます。</div>
+        <button id="addGo">＋空き管を${extra}本足して解く</button>`;
+      $('addGo').onclick=()=>{
+        snap();
+        for(let k=0;k<extra;k++){S.tubes.push(Array(S.cap).fill(EMPTY));S.rows.push(S.rows.length?Math.max(...S.rows):0)}
+        clearPlan();render();$('solve').onclick();
+      };
+      return;
+    }
+    res.innerHTML='<div class="note">進められる手が見つかりませんでした。「詳細」の「1つ戻す」で盤面を戻すか、読み取りが合っているか確認してください。</div>';
   },30);
 };
 </script>
